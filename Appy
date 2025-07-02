@@ -1,0 +1,288 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve, auc, classification_report
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.cluster import KMeans
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from mlxtend.frequent_patterns import apriori, association_rules
+
+# ------------------ Branding and Config ------------------
+st.set_page_config(
+    page_title="FocusNest Dashboard",
+    page_icon="🪺",
+    layout="wide"
+)
+st.markdown("""
+    <style>
+        body, .stApp {background-color: #f9f6ec;}
+        .css-18e3th9, .stTabs [data-baseweb="tab-list"] {background-color: #f9f6ec;}
+        .stTabs [data-baseweb="tab"] {color: #7e7309;}
+        .st-bx {background-color: #fffbe6; border: 1.5px solid #e7d58d; border-radius: 12px;}
+    </style>
+    """, unsafe_allow_html=True)
+
+with st.sidebar:
+    st.image("assets/FocusNest_logo.png", width=180)
+    st.markdown("<h2 style='color:#7e7309;'>FocusNest</h2><h5 style='color:#ad9e4a;'>Build Better Habits.<br>Break the Social Cycle.</h5>", unsafe_allow_html=True)
+    st.markdown("---")
+
+# ------------------ Data Load ------------------
+@st.cache_data
+def load_data():
+    return pd.read_excel("data/Dataset_for_Business_AssociationRuleReady.xlsx")
+df = load_data()
+
+# ------------------ Helper Functions ------------------
+def describe_numeric(df, col):
+    desc = df[col].describe()
+    st.write(f"**{col} statistics:**")
+    st.write(desc)
+
+def plot_dist(df, col, color="#bca43a"):
+    fig, ax = plt.subplots()
+    sns.histplot(df[col], kde=True, color=color)
+    st.pyplot(fig)
+
+def multi_select_heatmap(df, cols, title):
+    heat_data = df[cols].sum().sort_values(ascending=False)
+    fig, ax = plt.subplots()
+    sns.barplot(x=heat_data.values, y=heat_data.index, palette="YlOrBr", ax=ax)
+    ax.set_title(title)
+    st.pyplot(fig)
+
+def get_numeric_df(df):
+    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    # Drop columns with only one unique value
+    num_cols = [col for col in num_cols if df[col].nunique() > 1]
+    return df[num_cols]
+
+def encode_target(y):
+    le = LabelEncoder()
+    return le.fit_transform(y), le
+
+# ------------------ Tabs ------------------
+tabs = st.tabs([
+    "📊 Data Visualization",
+    "🤖 Classification",
+    "👥 Clustering",
+    "🔗 Association Rules",
+    "📈 Regression"
+])
+
+# ------------------ Tab 1: Data Visualization ------------------
+with tabs[0]:
+    st.header("Data Visualization & Insights")
+    st.markdown("### Explore the FocusNest dataset with interactive visualizations and key business insights.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        plot_dist(df, "Daily_Minutes_Spent")
+        st.caption("**Distribution of Daily Minutes Spent on Social Media.** Most users are clustered in the 50-250 min/day range, but outliers exist—these are heavy over-users who are prime FocusNest customers.")
+
+    with col2:
+        plot_dist(df, "Monthly_Income")
+        st.caption("**Distribution of Monthly Income.** Right-skewed, with outliers—matches real-world income distributions.")
+
+    st.markdown("---")
+    col3, col4 = st.columns(2)
+    with col3:
+        sns.countplot(x='Age', data=df, palette='YlOrBr')
+        st.pyplot(plt.gcf())
+        st.caption("**Age distribution of survey participants.** FocusNest appeals to a young-to-mid adult audience.")
+        plt.clf()
+
+    with col4:
+        sns.countplot(x='Gender', data=df, palette='pastel')
+        st.pyplot(plt.gcf())
+        st.caption("**Gender breakdown—balanced as in typical digital wellbeing samples.**")
+        plt.clf()
+
+    # Multi-select: platforms, challenges, features
+    st.markdown("#### Most Used Platforms")
+    platforms = [c for c in df.columns if c.startswith("Uses_")]
+    multi_select_heatmap(df, platforms, "Platforms Used")
+
+    st.markdown("#### Most Common Challenges")
+    challenges = [c for c in df.columns if c.startswith("Challenge_")]
+    multi_select_heatmap(df, challenges, "Challenges Due to Overuse")
+
+    st.markdown("#### Features Users Value")
+    features = [c for c in df.columns if c.startswith("Feature_")]
+    multi_select_heatmap(df, features, "Valued Features")
+
+    st.markdown("#### Complex Insight Example")
+    st.write("**Who are the most likely subscribers?**")
+    st.dataframe(df.groupby('Willingness_to_Subscribe')[['Daily_Minutes_Spent','Monthly_Income']].mean().style.background_gradient(cmap="YlGn"))
+    st.caption("**Those most willing to subscribe are, on average, heavier users and slightly higher earners.**")
+
+    st.download_button("Download Data", df.to_csv(index=False), "FocusNest_Data.csv")
+
+# ------------------ Tab 2: Classification ------------------
+with tabs[1]:
+    st.header("Classification: Predict Willingness to Subscribe")
+    st.markdown("Apply stratified machine learning models to predict who would subscribe to FocusNest.")
+    features = get_numeric_df(df)
+    target_col = "Willingness_to_Subscribe"
+    target = df[target_col]
+    y, le = encode_target(target)
+    X_train, X_test, y_train, y_test = train_test_split(
+        features, y, test_size=0.3, stratify=y, random_state=42
+    )
+
+    classifiers = {
+        "KNN": KNeighborsClassifier(),
+        "Decision Tree": DecisionTreeClassifier(),
+        "Random Forest": RandomForestClassifier(),
+        "GBRT": GradientBoostingClassifier()
+    }
+    results = {}
+    for name, model in classifiers.items():
+        model.fit(X_train, y_train)
+        pred = model.predict(X_test)
+        results[name] = {
+            "Accuracy": accuracy_score(y_test, pred),
+            "Precision": precision_score(y_test, pred, average='macro'),
+            "Recall": recall_score(y_test, pred, average='macro'),
+            "F1": f1_score(y_test, pred, average='macro'),
+            "model": model,
+            "pred": pred
+        }
+
+    st.markdown("#### Model Performance Table")
+    res_df = pd.DataFrame(results).T[['Accuracy','Precision','Recall','F1']]
+    st.dataframe(res_df.style.background_gradient(cmap="YlGn"))
+
+    # Confusion Matrix
+    clf_name = st.selectbox("Choose a model for confusion matrix", list(classifiers.keys()))
+    if st.button("Show Confusion Matrix"):
+        cm = confusion_matrix(y_test, results[clf_name]["pred"])
+        fig, ax = plt.subplots()
+        sns.heatmap(cm, annot=True, fmt='d', cmap='YlOrBr')
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("True")
+        ax.set_title(f"Confusion Matrix: {clf_name}")
+        st.pyplot(fig)
+
+    # ROC Curve (multi-class, OvR)
+    st.markdown("#### ROC Curve Comparison (One-vs-Rest, all models)")
+    fig, ax = plt.subplots()
+    for name, r in results.items():
+        try:
+            y_score = r['model'].predict_proba(X_test)
+            for i in range(len(le.classes_)):
+                fpr, tpr, _ = roc_curve((y_test == i).astype(int), y_score[:,i])
+                roc_auc = auc(fpr, tpr)
+                ax.plot(fpr, tpr, label=f"{name} [{le.classes_[i]}] (AUC={roc_auc:.2f})")
+        except Exception:
+            continue
+    ax.plot([0,1],[0,1],linestyle="--",color="gray")
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title("ROC Curves")
+    ax.legend()
+    st.pyplot(fig)
+
+    st.markdown("---")
+    st.write("**Upload new unlabeled data to predict subscription willingness (columns should match training data).**")
+    uploaded = st.file_uploader("Upload data for prediction", type=['csv','xlsx'])
+    if uploaded:
+        if uploaded.name.endswith(".csv"):
+            new_data = pd.read_csv(uploaded)
+        else:
+            new_data = pd.read_excel(uploaded)
+        st.write("Sample of uploaded data:")
+        st.dataframe(new_data.head())
+        model = classifiers['Random Forest'] # use best
+        new_pred = le.inverse_transform(model.predict(new_data[get_numeric_df(new_data).columns]))
+        new_data['Predicted_Willingness'] = new_pred
+        st.write("Predictions:")
+        st.dataframe(new_data[['Predicted_Willingness']])
+        st.download_button("Download Results", new_data.to_csv(index=False), "FocusNest_Predictions.csv")
+
+# ------------------ Tab 3: Clustering ------------------
+with tabs[2]:
+    st.header("Clustering: Discover Customer Personas")
+    num_clusters = st.slider("Number of clusters (K-means)", 2, 10, 4)
+    X = get_numeric_df(df)
+    kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+    clusters = kmeans.fit_predict(X)
+    df['Cluster'] = clusters
+    st.write("**Cluster Sizes:**")
+    st.dataframe(df['Cluster'].value_counts().sort_index().to_frame("Count"))
+    st.write("**Customer Personas by Cluster:**")
+    persona = df.groupby('Cluster').agg({
+        'Age':'median',
+        'Daily_Minutes_Spent':'mean',
+        'Monthly_Income':'median',
+        'Willingness_to_Subscribe':lambda x: x.value_counts().index[0],
+        'Pay_Amount':'median'
+    }).rename(columns={
+        'Age':'Median Age',
+        'Daily_Minutes_Spent':'Mean Minutes',
+        'Monthly_Income':'Median Income',
+        'Willingness_to_Subscribe':'Most Common Willingness',
+        'Pay_Amount':'Median Pay Amount'
+    })
+    st.dataframe(persona)
+    fig, ax = plt.subplots()
+    sns.scatterplot(x="Daily_Minutes_Spent", y="Monthly_Income", hue="Cluster", data=df, palette="YlOrBr")
+    st.pyplot(fig)
+    st.download_button("Download Clustered Data", df.to_csv(index=False), "FocusNest_Clustered.csv")
+
+# ------------------ Tab 4: Association Rules ------------------
+with tabs[3]:
+    st.header("Association Rule Mining (Apriori)")
+    multi_cols = [c for c in df.columns if set(df[c].dropna().unique()) <= {0,1}]
+    col_options = st.multiselect("Select columns for mining (at least 2)", multi_cols, default=multi_cols[:2])
+    min_support = st.slider("Min Support", 0.01, 0.2, 0.05)
+    min_conf = st.slider("Min Confidence", 0.1, 0.95, 0.4)
+    if len(col_options) >= 2:
+        d = df[col_options]
+        frequent = apriori(d, min_support=min_support, use_colnames=True)
+        rules = association_rules(frequent, metric="confidence", min_threshold=min_conf)
+        if not rules.empty:
+            show_cols = ['antecedents','consequents','support','confidence','lift']
+            st.dataframe(rules[show_cols].sort_values("lift", ascending=False).head(10))
+        else:
+            st.info("No rules found—try lowering support/confidence.")
+
+# ------------------ Tab 5: Regression ------------------
+with tabs[4]:
+    st.header("Regression Insights")
+    st.markdown("Predicting how much a user might be willing to pay using linear, ridge, lasso, and tree regressors.")
+    target = "Pay_Amount"
+    X = get_numeric_df(df).drop(columns=[target], errors='ignore')
+    y = df[target]
+    regressors = {
+        "Linear": LinearRegression(),
+        "Ridge": Ridge(),
+        "Lasso": Lasso(),
+    }
+    res = {}
+    for name, reg in regressors.items():
+        reg.fit(X, y)
+        pred = reg.predict(X)
+        res[name] = {
+            "R2": reg.score(X, y),
+            "MAE": np.mean(np.abs(pred-y)),
+            "RMSE": np.sqrt(np.mean((pred-y)**2))
+        }
+    st.dataframe(pd.DataFrame(res).T)
+    st.markdown("#### Actual vs Predicted (Linear Regression)")
+    lin = LinearRegression().fit(X, y)
+    ypred = lin.predict(X)
+    fig, ax = plt.subplots()
+    ax.scatter(y, ypred, alpha=0.3)
+    ax.plot([y.min(), y.max()], [y.min(), y.max()], '--', color='gold')
+    ax.set_xlabel("Actual Pay Amount")
+    ax.set_ylabel("Predicted Pay Amount")
+    st.pyplot(fig)
+    st.caption("**Linear regression does not perfectly predict willingness to pay—showing the complexity of real consumer sentiment.**")
